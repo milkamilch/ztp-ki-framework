@@ -1,0 +1,20 @@
+# IPMI Exporter — Remote-Modul-Konfiguration
+# Dokumentation: https://github.com/prometheus-community/ipmi_exporter
+
+modules:
+  default:
+    # Collector-Auswahl: was vom BMC abgefragt wird
+    collectors:
+      - bmc          # BMC-Infos (Firmware, Hersteller)
+      - ipmi         # Sensor-Daten (Temperatur, Spannung, Lüfter)
+      - sel          # System Event Log — wichtig für Anomalie-Detektor
+      - dcmi         # Stromverbrauch (optional)
+
+    # IPMI-Zugangsdaten — werden per Scrape-Target übergeben
+    # In Produktion: Secrets via Vault oder .env
+    # Für PoC: direkt hier setzen (nicht ins Repo committen!)
+    # username: IPMI_USER
+    # password: IPMI_PASSWORD
+
+    # Timeout pro Abfrage
+    timeout: 10s

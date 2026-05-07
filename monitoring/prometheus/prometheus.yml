@@ -1,0 +1,37 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  external_labels:
+    environment: ztp-poc
+
+rule_files: []
+
+scrape_configs:
+
+  # Prometheus selbst
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  # IPMI/Redfish-Metriken vom Management Node via IPMI Exporter
+  # Targets = BMC-IPs der zu provisionierenden Server (in .env oder direkt hier pflegen)
+  - job_name: ipmi
+    params:
+      module: [default]
+    static_configs:
+      - targets:
+          - 192.168.1.101  # BMC-IP Server 1 — anpassen
+          - 192.168.1.102  # BMC-IP Server 2 — anpassen
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: ipmi-exporter:9290
+
+  # KI-Self-Healing Layer — Python-Dienst exposet eigene Metriken (Anomalie-Counts etc.)
+  # Wird aktiviert, sobald ki/ implementiert ist
+  # - job_name: ki_layer
+  #   static_configs:
+  #     - targets: [host.docker.internal:8888]
