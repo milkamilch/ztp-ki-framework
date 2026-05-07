@@ -1,0 +1,15 @@
+# Gemeinsame Variablen für alle Playbooks
+# Secrets niemals direkt hier eintragen — per Umgebungsvariable übergeben.
+
+management_node_ip: "192.168.100.1"
+
+netbox_url:   "http://{{ management_node_ip }}:8080"
+netbox_token: "{{ lookup('env', 'NETBOX_API_TOKEN') }}"
+
+node_exporter_version: "1.8.1"
+node_exporter_port:    9100
+
+ztp_ssh_key_path: "~/.ssh/ztp_key"
+
+# Maximale Retry-Versuche des Healing-Layers bevor Rollback
+max_retry_attempts: 3

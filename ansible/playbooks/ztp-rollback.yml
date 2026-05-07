@@ -1,0 +1,104 @@
+---
+# ──────────────────────────────────────────────────────────────
+# ZTP Rollback
+# Wird vom KI-Self-Healing-Layer bei kritischen Anomalien
+# (SEL_CRITICAL + HIGH/CRITICAL, POST_ERROR + CRITICAL) ausgelöst.
+#
+# Strategie: Vollständige Neuinstallation des Servers.
+#   1. Protokolliere den Rollback-Grund
+#   2. Setze nächsten Boot auf PXE (persistent)
+#   3. Führe Power-Cycle durch → Server startet neu → PXE-Boot
+#   4. Der laufende ZTP-Prozess übernimmt ab hier wieder
+# ──────────────────────────────────────────────────────────────
+- name: ZTP Rollback — Server neu provisionieren
+  hosts: "{{ target_hosts | default('provisioning') }}"
+  gather_facts: false
+  become: false
+
+  vars:
+    rollback_timestamp: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+    bmc_host:  "{{ hostvars[inventory_hostname]['bmc_ip'] | default(inventory_hostname) }}"
+    bmc_user:  "{{ lookup('env', 'BMC_USER')     | default('admin') }}"
+    bmc_pass:  "{{ lookup('env', 'BMC_PASSWORD') | default('admin') }}"
+
+  tasks:
+
+    - name: Rollback-Beginn loggen
+      ansible.builtin.debug:
+        msg: >
+          ⚠ ZTP-ROLLBACK ausgelöst für {{ inventory_hostname }}
+          um {{ rollback_timestamp }}.
+          Grund: {{ rollback_reason | default('nicht angegeben') }}
+
+    # ── Rollback in Netbox als Kommentar vermerken ──
+    - name: Rollback in Netbox dokumentieren
+      ansible.builtin.uri:
+        url:    "{{ netbox_url }}/api/dcim/devices/?name={{ inventory_hostname }}"
+        method: GET
+        headers:
+          Authorization: "Token {{ netbox_token }}"
+      register: netbox_lookup
+      delegate_to: localhost
+      failed_when: false
+
+    - name: Rollback-Kommentar in Netbox eintragen
+      ansible.builtin.uri:
+        url:    "{{ netbox_url }}/api/dcim/devices/{{ netbox_lookup.json.results[0].id }}/"
+        method: PATCH
+        headers:
+          Authorization: "Token {{ netbox_token }}"
+          Content-Type:  "application/json"
+        body_format: json
+        body:
+          status:   provisioning
+          comments: "ROLLBACK {{ rollback_timestamp }}: {{ rollback_reason | default('KI-Self-Healing') }}"
+        status_code: [200]
+      delegate_to: localhost
+      when:
+        - netbox_lookup.status == 200
+        - netbox_lookup.json.count > 0
+      failed_when: false
+
+    # ── PXE als nächsten Boot setzen ──
+    - name: Nächsten Boot auf PXE setzen (persistent)
+      ansible.builtin.command:
+        cmd: >
+          ipmitool -I lanplus
+          -H {{ bmc_host }} -U {{ bmc_user }} -P {{ bmc_pass }}
+          chassis bootdev pxe options=persistent
+      delegate_to: localhost
+      register: pxe_result
+
+    - name: PXE-Boot-Ergebnis prüfen
+      ansible.builtin.fail:
+        msg: "PXE-Boot konnte nicht gesetzt werden: {{ pxe_result.stderr }}"
+      when: pxe_result.rc != 0
+
+    # ── Power Cycle ──
+    - name: Server ausschalten (graceful)
+      ansible.builtin.command:
+        cmd: >
+          ipmitool -I lanplus
+          -H {{ bmc_host }} -U {{ bmc_user }} -P {{ bmc_pass }}
+          chassis power soft
+      delegate_to: localhost
+      failed_when: false
+
+    - name: 10 Sekunden warten
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Server einschalten
+      ansible.builtin.command:
+        cmd: >
+          ipmitool -I lanplus
+          -H {{ bmc_host }} -U {{ bmc_user }} -P {{ bmc_pass }}
+          chassis power on
+      delegate_to: localhost
+
+    - name: Rollback abgeschlossen — warte auf PXE-Boot
+      ansible.builtin.debug:
+        msg: >
+          Rollback für {{ inventory_hostname }} abgeschlossen.
+          Server bootet per PXE — ZTP-Prozess übernimmt.
+          Überwachung durch KI-Layer läuft weiter.

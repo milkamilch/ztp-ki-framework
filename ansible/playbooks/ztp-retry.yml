@@ -1,0 +1,70 @@
+---
+# ──────────────────────────────────────────────────────────────
+# ZTP Retry
+# Wird vom KI-Self-Healing-Layer ausgelöst, wenn eine Anomalie
+# der Typen POST_ERROR oder ML_OUTLIER erkannt wird.
+#
+# Strategie:
+#   1. Prüfe, ob der Server per SSH erreichbar ist (OS-Install OK?)
+#   2. Wenn ja: Post-Install-Konfiguration erneut durchführen
+#   3. Wenn nein: PXE-Boot neu auslösen via ipmitool
+# ──────────────────────────────────────────────────────────────
+- name: ZTP Retry — Provisionierungsschritt wiederholen
+  hosts: "{{ target_hosts | default('provisioning') }}"
+  gather_facts: false
+  become: false
+
+  vars:
+    retry_timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+
+  tasks:
+
+    - name: Retry-Aktion loggen
+      ansible.builtin.debug:
+        msg: "ZTP-Retry gestartet für {{ inventory_hostname }} um {{ retry_timestamp }}"
+
+    # ── SSH-Erreichbarkeit prüfen ──
+    - name: Prüfe SSH-Verbindung (Timeout 30s)
+      ansible.builtin.wait_for:
+        host:    "{{ inventory_hostname }}"
+        port:    22
+        timeout: 30
+      register: ssh_check
+      failed_when: false
+      delegate_to: localhost
+
+    # ── Fall A: SSH erreichbar → Post-Install wiederholen ──
+    - name: Post-Install erneut ausführen (SSH verfügbar)
+      ansible.builtin.include_tasks: post-install-tasks.yml
+      when: ssh_check.elapsed is defined and ssh_check.elapsed < 30
+
+    # ── Fall B: SSH nicht erreichbar → PXE-Boot neu auslösen ──
+    - name: Setze nächsten Boot auf PXE (BMC)
+      ansible.builtin.command:
+        cmd: >
+          ipmitool -I lanplus
+          -H {{ hostvars[inventory_hostname]['bmc_ip'] | default(inventory_hostname) }}
+          -U {{ lookup('env', 'BMC_USER') | default('admin') }}
+          -P {{ lookup('env', 'BMC_PASSWORD') | default('admin') }}
+          chassis bootdev pxe options=persistent
+      delegate_to: localhost
+      when: ssh_check.elapsed is not defined or ssh_check.elapsed >= 30
+      register: pxe_boot_set
+      failed_when: pxe_boot_set.rc != 0
+
+    - name: Server neu starten (BMC)
+      ansible.builtin.command:
+        cmd: >
+          ipmitool -I lanplus
+          -H {{ hostvars[inventory_hostname]['bmc_ip'] | default(inventory_hostname) }}
+          -U {{ lookup('env', 'BMC_USER') | default('admin') }}
+          -P {{ lookup('env', 'BMC_PASSWORD') | default('admin') }}
+          chassis power reset
+      delegate_to: localhost
+      when: ssh_check.elapsed is not defined or ssh_check.elapsed >= 30
+
+    - name: Retry-Ergebnis loggen
+      ansible.builtin.debug:
+        msg: >
+          Retry abgeschlossen für {{ inventory_hostname }}.
+          SSH-Status: {{ 'erreichbar' if (ssh_check.elapsed is defined and ssh_check.elapsed < 30) else 'nicht erreichbar — PXE-Reboot ausgelöst' }}

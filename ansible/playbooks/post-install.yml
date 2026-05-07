@@ -1,0 +1,147 @@
+---
+# ──────────────────────────────────────────────────────────────
+# Post-Install-Konfiguration
+# Wird nach erfolgreicher OS-Installation vom Autoinstall-Trigger
+# auf dem Management Node ausgelöst (pxe/setup.sh → trigger.sh).
+#
+# Aufgaben:
+#   1. Pakete aktualisieren + Basis-Tools installieren
+#   2. Hostname setzen
+#   3. SSH absichern
+#   4. Prometheus Node Exporter installieren
+#   5. Server in Netbox registrieren
+# ──────────────────────────────────────────────────────────────
+- name: Post-Install-Konfiguration
+  hosts: "{{ target_hosts | default('provisioning') }}"
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    # ── 1. Verbindung abwarten (Server bootet gerade durch) ──
+    - name: Warte auf SSH-Verbindung
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        sleep:   10
+
+    # ── 2. Pakete ──
+    - name: APT-Cache aktualisieren
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Basis-Pakete installieren
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-pip
+          - ipmitool
+          - curl
+          - wget
+          - net-tools
+          - jq
+        state: present
+
+    # ── 3. Hostname ──
+    - name: Hostname aus IP ableiten und setzen
+      ansible.builtin.hostname:
+        name: "ztp-{{ ansible_default_ipv4.address | replace('.', '-') }}"
+
+    # ── 4. SSH absichern ──
+    - name: SSH-Konfiguration härten
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line:   "{{ item.line }}"
+        state:  present
+      loop:
+        - { regexp: '^#?PermitRootLogin',    line: 'PermitRootLogin no' }
+        - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^#?X11Forwarding',      line: 'X11Forwarding no' }
+      notify: SSH neu starten
+
+    # ── 5. Prometheus Node Exporter ──
+    - name: Node-Exporter-Archiv herunterladen
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /tmp/node_exporter.tar.gz
+        mode: "0644"
+
+    - name: Node Exporter entpacken
+      ansible.builtin.unarchive:
+        src:        /tmp/node_exporter.tar.gz
+        dest:       /tmp/
+        remote_src: true
+
+    - name: Node-Exporter-Binary installieren
+      ansible.builtin.copy:
+        src:  "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        mode: "0755"
+        remote_src: true
+
+    - name: Systemd-Unit für Node Exporter anlegen
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/node_exporter.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Prometheus Node Exporter
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/local/bin/node_exporter --web.listen-address=:{{ node_exporter_port }}
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Node Exporter starten und aktivieren
+      ansible.builtin.systemd:
+        name:          node_exporter
+        state:         started
+        enabled:       true
+        daemon_reload: true
+
+    # ── 6. In Netbox registrieren ──
+    - name: Server in Netbox als Device anlegen
+      ansible.builtin.uri:
+        url:          "{{ netbox_url }}/api/dcim/devices/"
+        method:       POST
+        headers:
+          Authorization: "Token {{ netbox_token }}"
+          Content-Type:  "application/json"
+        body_format: json
+        body:
+          name:        "{{ ansible_hostname }}"
+          device_type: { model: "Generic Server" }
+          role:        { name: "Server" }
+          site:        { name: "ZTP-PoC" }
+          status:      active
+          comments:    "Automatisch provisioniert via ZTP-Framework"
+        status_code: [201, 400]  # 400 = existiert bereits
+      register: netbox_result
+      failed_when: >
+        netbox_result.status not in [201, 400]
+
+    - name: IP-Adresse in Netbox eintragen
+      ansible.builtin.uri:
+        url:          "{{ netbox_url }}/api/ipam/ip-addresses/"
+        method:       POST
+        headers:
+          Authorization: "Token {{ netbox_token }}"
+          Content-Type:  "application/json"
+        body_format: json
+        body:
+          address:        "{{ ansible_default_ipv4.address }}/24"
+          status:         active
+          description:    "ZTP-provisioniert: {{ ansible_hostname }}"
+        status_code: [201, 400]
+      failed_when: false
+
+  handlers:
+    - name: SSH neu starten
+      ansible.builtin.service:
+        name:  sshd
+        state: restarted
