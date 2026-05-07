@@ -1,0 +1,65 @@
+#!ipxe
+
+# ──────────────────────────────────────────────────────────────
+# ZTP-Framework — iPXE Boot Script
+# HTTP-Base-URL des Management Node anpassen:
+set base-url http://192.168.100.1/pxe
+# ──────────────────────────────────────────────────────────────
+
+echo
+echo ╔══════════════════════════════════════╗
+echo ║     ZTP-KI-Framework Boot Menu       ║
+echo ╚══════════════════════════════════════╝
+echo MAC: ${net0/mac}  IP: ${net0/ip}
+echo
+
+:menu
+menu ZTP-Framework — OS Selection
+item --gap --          ── Ubuntu Server 24.04 LTS ──────────────────
+item ubuntu-auto       Ubuntu 24.04 LTS  (ZTP Auto-Install)
+item ubuntu-manual     Ubuntu 24.04 LTS  (Manuell)
+item --gap --          ─────────────────────────────────────────────
+item shell             iPXE Shell
+item reboot            Reboot
+choose --timeout 30 --default ubuntu-auto target
+goto ${target}
+
+# ──────────────────────────────────────────
+# Ubuntu 24.04 — Vollautomatisch (ZTP)
+# ds=nocloud-net liefert autoinstall-config per HTTP;
+# URL enthält MAC-Adresse → server-spezifische Configs möglich.
+# ──────────────────────────────────────────
+:ubuntu-auto
+echo Booting Ubuntu 24.04 LTS (Auto-Install) ...
+kernel ${base-url}/ubuntu/noble/casper/vmlinuz
+initrd ${base-url}/ubuntu/noble/casper/initrd
+imgargs vmlinuz \
+  ip=dhcp \
+  url=${base-url}/ubuntu/noble-live-server-amd64.iso \
+  autoinstall \
+  ds=nocloud-net\;s=${base-url}/autoinstall/${net0/mac:hexhyp}/ \
+  console=tty0 console=ttyS0,115200n8 \
+  quiet splash ---
+boot || goto failed
+
+# ──────────────────────────────────────────
+# Ubuntu 24.04 — Manuell
+# ──────────────────────────────────────────
+:ubuntu-manual
+echo Booting Ubuntu 24.04 LTS (Manuell) ...
+kernel ${base-url}/ubuntu/noble/casper/vmlinuz
+initrd ${base-url}/ubuntu/noble/casper/initrd
+imgargs vmlinuz ip=dhcp url=${base-url}/ubuntu/noble-live-server-amd64.iso console=tty0
+boot || goto failed
+
+:shell
+echo Dropping to iPXE shell ...
+shell
+
+:reboot
+reboot
+
+:failed
+echo
+echo Boot fehlgeschlagen. Dropping to shell.
+shell
