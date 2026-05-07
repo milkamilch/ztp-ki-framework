@@ -1,0 +1,24 @@
+# ZTP-KI-Framework — Konfiguration des KI-Self-Healing-Layers
+# Kopiere diese Datei und passe sie an deine Umgebung an.
+
+# BMC-IPs der zu überwachenden Server
+targets:
+  - 192.168.100.101   # Server 1 (BMC-IP)
+  - 192.168.100.102   # Server 2 (BMC-IP)
+
+# Abfrageintervall in Sekunden
+poll_interval_seconds: 30
+
+# BMC-Zugangsdaten (Redfish + IPMI-Fallback)
+bmc:
+  username: admin
+  password: change-me
+  timeout:  10
+
+# Ansible
+ansible:
+  inventory: ansible/inventory/hosts.ini
+
+# Isolation Forest
+model_path:    ki/model.joblib
+contamination: 0.05   # ~5% erwartete Ausreißerrate
