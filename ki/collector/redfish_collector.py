@@ -1,6 +1,6 @@
 """
 Sammelt Sensor-Daten und SEL-Logs von einem BMC via Redfish REST-API.
-Fällt auf ipmitool zurück, wenn Redfish nicht erreichbar ist.
+Fällt automatisch auf ipmitool zurück, wenn Redfish keine Sensordaten liefert.
 """
 from __future__ import annotations
 
@@ -19,7 +19,22 @@ logger = logging.getLogger(__name__)
 
 
 class RedfishCollector:
+    """Liest Telemetriedaten von einem BMC (Baseboard Management Controller).
+
+    Nutzt die Redfish REST-API (HTTPS/JSON) als primäre Quelle.
+    Falls Redfish keine Sensordaten zurückliefert (ältere Hardware oder
+    inkompatible Firmware), wird automatisch auf ``ipmitool`` umgeschaltet.
+    BMC-TLS-Zertifikate werden bewusst nicht verifiziert (self-signed üblich).
+    """
+
     def __init__(self, username: str, password: str, timeout: int = 10):
+        """Initialisiert den Collector mit BMC-Zugangsdaten.
+
+        Args:
+            username: BMC-Benutzername (z. B. "admin").
+            password: BMC-Passwort.
+            timeout:  HTTP-Timeout in Sekunden pro Anfrage.
+        """
         self.username = username
         self.password = password
         self.timeout  = timeout
@@ -30,6 +45,17 @@ class RedfishCollector:
     # ──────────────────────────────────────────
 
     def collect(self, target: str) -> CollectorSnapshot:
+        """Führt eine vollständige Datenabfrage für einen BMC-Host durch.
+
+        Kombiniert Sensor-Readings, SEL-Einträge und System-Status zu einem
+        CollectorSnapshot, der durch die weitere KI-Pipeline verarbeitet wird.
+
+        Args:
+            target: IP-Adresse des BMC (z. B. "192.168.100.201").
+
+        Returns:
+            CollectorSnapshot mit allen verfügbaren Daten zum aktuellen Zeitpunkt.
+        """
         sensors    = self._collect_sensors(target)
         sel        = self._collect_sel(target)
         state, pco = self._collect_system_state(target)
@@ -47,6 +73,11 @@ class RedfishCollector:
     # ──────────────────────────────────────────
 
     def _collect_sensors(self, host: str) -> list[SensorReading]:
+        """Liest Temperatur-, Lüfter- und Leistungsdaten via Redfish.
+
+        Fragt /Thermal (Temperaturen, Lüfter) und /Power (Stromverbrauch) ab.
+        Gibt bei leerem Ergebnis an ipmitool weiter.
+        """
         readings: list[SensorReading] = []
 
         thermal = self._get(host, "/redfish/v1/Chassis/1/Thermal")
@@ -91,6 +122,11 @@ class RedfishCollector:
     # ──────────────────────────────────────────
 
     def _collect_sel(self, host: str) -> list[SelEntry]:
+        """Liest die letzten 50 Einträge aus dem System Event Log (SEL).
+
+        Der SEL enthält Hardware-Ereignisse wie ECC-Fehler, Temperaturschwellen
+        oder POST-Fehler und ist die wichtigste Quelle für den Log-Parser.
+        """
         data    = self._get(host, "/redfish/v1/Systems/1/LogServices/Sel/Entries")
         entries = []
         for m in data.get("Members", [])[:50]:
@@ -112,6 +148,11 @@ class RedfishCollector:
     # ──────────────────────────────────────────
 
     def _collect_system_state(self, host: str) -> tuple[str, str | None]:
+        """Liest den aktuellen Power-State und Boot-Override-Status des Systems.
+
+        Returns:
+            Tuple (power_state, post_code), z. B. ("On", None).
+        """
         data        = self._get(host, "/redfish/v1/Systems/1")
         power_state = data.get("PowerState", "Unknown")
         post_code   = data.get("Boot", {}).get("BootSourceOverrideEnabled")
@@ -122,6 +163,11 @@ class RedfishCollector:
     # ──────────────────────────────────────────
 
     def _ipmitool_sensors(self, host: str) -> list[SensorReading]:
+        """Liest Sensor-Daten über das ipmitool-Kommandozeilenwerkzeug.
+
+        Wird nur aufgerufen, wenn die Redfish-Abfrage keine Daten liefert.
+        Parst die tabellarische Ausgabe von ``ipmitool sensor``.
+        """
         try:
             out = subprocess.check_output(
                 ["ipmitool", "-I", "lanplus", "-H", host,
@@ -150,6 +196,12 @@ class RedfishCollector:
     # ──────────────────────────────────────────
 
     def _get(self, host: str, path: str) -> dict[str, Any]:
+        """Führt einen authentifizierten GET-Request gegen die Redfish-API aus.
+
+        Baut pro Host eine wiederverwendbare Session auf.
+        Gibt bei Fehlern ein leeres Dict zurück, statt eine Exception zu werfen,
+        damit der Collector weiterläuft auch wenn ein Host kurz nicht erreichbar ist.
+        """
         if host not in self._sessions:
             s = requests.Session()
             s.auth    = (self.username, self.password)

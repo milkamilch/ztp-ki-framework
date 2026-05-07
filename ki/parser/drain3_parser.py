@@ -1,7 +1,9 @@
 """
 Strukturiert rohe SEL-Log-Nachrichten mit dem Drain3-Algorithmus.
+
 Drain3 clustert wiederkehrende Log-Muster zu Templates und extrahiert
-variable Teile (Parameter) — wichtige Vorarbeit für den Anomalie-Detektor.
+variable Teile (Parameter). Das Ergebnis macht Logs vergleichbar und
+ist Voraussetzung für eine sinnvolle Anomalie-Erkennung.
 """
 from __future__ import annotations
 
@@ -15,7 +17,8 @@ from ki.models import ParsedLogEvent, SelEntry
 
 logger = logging.getLogger(__name__)
 
-# Muster, die unabhängig vom ML-Modell sofort als kritisch gelten
+# Schlüsselwörter, die unabhängig vom ML-Modell sofort auf "Critical" eskalieren.
+# Bewusst lowercase — Vergleich erfolgt case-insensitive.
 CRITICAL_KEYWORDS = [
     "uncorrectable ecc",
     "machine check",
@@ -32,7 +35,21 @@ CRITICAL_KEYWORDS = [
 
 
 class DrainLogParser:
+    """Wrapper um den Drain3-Template-Miner für SEL-Log-Einträge.
+
+    Drain3 lernt während des Betriebs kontinuierlich neue Log-Templates.
+    Ein Template fasst strukturell ähnliche Nachrichten zusammen, z. B.:
+      "DIMM_A1 correctable ECC error"
+      "DIMM_B2 correctable ECC error"
+    → Template: "DIMM_* correctable ECC error", Parameter: ["A1"] / ["B2"]
+    """
+
     def __init__(self):
+        """Initialisiert den Drain3 TemplateMiner mit konservativen Einstellungen.
+
+        sim_th=0.4 erlaubt großzügiges Clustering, damit ähnliche
+        Hardware-Nachrichten verschiedener Hersteller zusammengefasst werden.
+        """
         cfg = TemplateMinerConfig()
         cfg.drain_sim_th               = 0.4
         cfg.drain_depth                = 4
@@ -42,6 +59,15 @@ class DrainLogParser:
         logging.getLogger("drain3").setLevel(logging.WARNING)
 
     def parse(self, entries: list[SelEntry]) -> list[ParsedLogEvent]:
+        """Verarbeitet eine Liste von SEL-Einträgen zu strukturierten Log-Ereignissen.
+
+        Args:
+            entries: Rohe SEL-Einträge aus dem CollectorSnapshot.
+
+        Returns:
+            Liste von ParsedLogEvent — ein Eintrag pro SEL-Zeile, angereichert
+            um Template-ID, extrahierte Parameter und ggf. eskalierte Severity.
+        """
         events = []
         for entry in entries:
             result  = self._miner.add_log_message(entry.message)
@@ -64,6 +90,11 @@ class DrainLogParser:
 
     @staticmethod
     def _escalate_severity(message: str, original: str) -> str:
+        """Stuft die Severity auf 'Critical' hoch, wenn ein bekanntes kritisches Schlüsselwort enthalten ist.
+
+        Ergänzt die BMC-eigene Severity, die bei manchen Herstellern unvollständig
+        oder zu konservativ gesetzt ist.
+        """
         lower = message.lower()
         if any(kw in lower for kw in CRITICAL_KEYWORDS):
             return "Critical"

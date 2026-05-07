@@ -1,6 +1,14 @@
 """
 ZTP-Monitor — Hauptschleife des KI-Self-Healing-Layers.
-Startet mit: python -m ki.main [config.yaml]
+
+Orchestriert die gesamte Pipeline:
+    RedfishCollector → DrainLogParser → AnomalyDetector → HealingEngine
+
+Jeder konfigurierte BMC-Host wird in jedem Poll-Zyklus verarbeitet.
+Fehler bei einem einzelnen Host unterbrechen nicht die Verarbeitung der anderen.
+
+Starten:
+    python -m ki.main [pfad/zur/config.yaml]
 """
 from __future__ import annotations
 
@@ -26,7 +34,18 @@ logger = logging.getLogger("ztp.monitor")
 
 
 class ZTPMonitor:
+    """Hauptklasse des KI-Self-Healing-Layers.
+
+    Liest die Konfiguration aus einer YAML-Datei, initialisiert alle
+    Pipeline-Komponenten und startet die asynchrone Polling-Schleife.
+    """
+
     def __init__(self, config_path: Path):
+        """Lädt die Konfiguration und initialisiert alle Pipeline-Komponenten.
+
+        Args:
+            config_path: Pfad zur config.yaml (siehe ki/config.yaml als Vorlage).
+        """
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
 
@@ -52,6 +71,11 @@ class ZTPMonitor:
         )
 
     async def run(self) -> None:
+        """Startet die Polling-Schleife und verarbeitet alle konfigurierten Targets.
+
+        Läuft bis ``stop()`` aufgerufen wird (SIGINT / SIGTERM).
+        Schläft ``poll_interval`` Sekunden zwischen den Zyklen.
+        """
         logger.info(
             "ZTP-Monitor gestartet | %d Target(s) | Intervall: %ds",
             len(self.targets), self.poll_interval,
@@ -63,6 +87,14 @@ class ZTPMonitor:
         logger.info("ZTP-Monitor gestoppt.")
 
     async def _process(self, target: str) -> None:
+        """Verarbeitet einen einzelnen BMC-Host durch die komplette Pipeline.
+
+        Fehler werden geloggt aber nicht weitergereicht, damit andere Hosts
+        im selben Zyklus weiter verarbeitet werden.
+
+        Args:
+            target: BMC-IP-Adresse des Servers.
+        """
         try:
             snapshot = self.collector.collect(target)
             events   = self.parser.parse(snapshot.sel_entries)
@@ -76,10 +108,12 @@ class ZTPMonitor:
             logger.exception("[%s] Unbehandelter Fehler", target)
 
     def stop(self) -> None:
+        """Beendet die Polling-Schleife nach dem aktuellen Zyklus."""
         self._running = False
 
 
 def main() -> None:
+    """Einstiegspunkt: lädt Config, registriert Signal-Handler und startet den Monitor."""
     config_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("ki/config.yaml")
     if not config_path.exists():
         logger.error("Config nicht gefunden: %s", config_path)

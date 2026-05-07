@@ -1,8 +1,16 @@
 """
-Zweistufige Anomalieerkennung:
-  1. Regelbasiert  — harte Schwellenwerte (sofort, deterministisch)
-  2. ML-basiert    — Isolation Forest auf Sensor-Zeitreihen
-                     (Warmup-Phase: erste N Snapshots, dann Inferenz)
+Zweistufige Anomalie-Erkennung auf Sensor-Zeitreihen und Log-Ereignissen.
+
+Stufe 1 — Regelbasiert:
+    Harte Schwellenwerte für Temperatur, Lüfter und SEL-Einträge.
+    Liefert sofort ein deterministisches Ergebnis ohne Trainingsphase.
+
+Stufe 2 — ML-basiert (Isolation Forest):
+    Erkennt statistische Ausreißer in einem 6-dimensionalen Feature-Vektor
+    aus Sensor-Aggregaten. Benötigt eine Warmup-Phase von WARMUP_SIZE Samples,
+    bevor das Modell trainiert und aktiv wird.
+
+Stufe 1 hat immer Vorrang bei hohem/kritischem Schweregrad.
 """
 from __future__ import annotations
 
@@ -19,31 +27,47 @@ from ki.models import (
 
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────
-# Schwellenwerte (können per config.yaml überschrieben werden)
-# ──────────────────────────────────────────
 TEMP_WARN_C  = 75.0
 TEMP_CRIT_C  = 85.0
 FAN_MIN_RPM  = 500.0
 POWER_MAX_W  = 1200.0
-WARMUP_SIZE  = 50      # Samples bis das ML-Modell trainiert wird
+WARMUP_SIZE  = 50
 
 
 class AnomalyDetector:
+    """Erkennt Anomalien in Sensor-Daten und Log-Ereignissen.
+
+    Kombiniert Regelprüfung (schnell, deterministisch) mit einem
+    Isolation-Forest-Modell (lernt normale Sensor-Profile).
+    Das trainierte Modell wird als .joblib-Datei persistiert und
+    beim nächsten Start automatisch geladen.
+    """
+
     def __init__(
         self,
-        model_path: Path | None = None,
+        model_path:   Path | None = None,
         contamination: float = 0.05,
-        temp_warn: float = TEMP_WARN_C,
-        temp_crit: float = TEMP_CRIT_C,
+        temp_warn:     float = TEMP_WARN_C,
+        temp_crit:     float = TEMP_CRIT_C,
     ):
+        """Initialisiert den Detektor.
+
+        Args:
+            model_path:    Pfad zum gespeicherten Isolation-Forest-Modell (.joblib).
+                           Wenn die Datei existiert, wird sie geladen und die
+                           Warmup-Phase übersprungen.
+            contamination: Erwarteter Anteil anomaler Samples im Trainings-Set
+                           (0.05 = 5 %). Steuert die Empfindlichkeit des Modells.
+            temp_warn:     Temperatur-Schwelle in °C für Severity.MEDIUM.
+            temp_crit:     Temperatur-Schwelle in °C für Severity.CRITICAL.
+        """
         self.model_path    = model_path
         self.contamination = contamination
         self.temp_warn     = temp_warn
         self.temp_crit     = temp_crit
 
-        self._model:          IsolationForest | None = None
-        self._warmup_buffer:  list[list[float]]      = []
+        self._model:         IsolationForest | None = None
+        self._warmup_buffer: list[list[float]]      = []
         self._trained = False
 
         if model_path and model_path.exists():
@@ -60,9 +84,21 @@ class AnomalyDetector:
         snapshot: CollectorSnapshot,
         events:   list[ParsedLogEvent],
     ) -> AnomalyResult:
+        """Führt die zweistufige Anomalie-Erkennung für einen Snapshot durch.
+
+        Stufe 1 (Regelcheck) hat Vorrang: Bei HIGH oder CRITICAL wird das
+        Ergebnis sofort zurückgegeben. Nur bei OK/LOW/MEDIUM wird zusätzlich
+        der ML-Check ausgeführt und das schlimmere der beiden Ergebnisse gewählt.
+
+        Args:
+            snapshot: Sensor-Daten und SEL-Einträge des aktuellen Abfrage-Zyklus.
+            events:   Geparste Log-Ereignisse vom DrainLogParser.
+
+        Returns:
+            AnomalyResult mit Urteil, Typ, Schweregrad und Begründung.
+        """
         rule = self._rule_check(snapshot, events)
 
-        # Kritische Regelanomalien haben immer Vorrang
         if rule.severity in (Severity.HIGH, Severity.CRITICAL):
             return rule
 
@@ -75,7 +111,7 @@ class AnomalyDetector:
         return rule
 
     # ──────────────────────────────────────────
-    # 1. Regelbasierte Prüfung
+    # Stufe 1: Regelbasierte Prüfung
     # ──────────────────────────────────────────
 
     def _rule_check(
@@ -83,7 +119,11 @@ class AnomalyDetector:
         snapshot: CollectorSnapshot,
         events:   list[ParsedLogEvent],
     ) -> AnomalyResult:
+        """Prüft alle Sensoren und Log-Ereignisse gegen harte Schwellenwerte.
 
+        Gibt beim ersten Treffer sofort das Ergebnis zurück (fail-fast).
+        Reihenfolge: Temperatur → Lüfter → Leistung → SEL-Einträge.
+        """
         for sensor in snapshot.sensors:
             if sensor.unit == "C":
                 if sensor.value >= self.temp_crit:
@@ -98,7 +138,7 @@ class AnomalyDetector:
                         f"{sensor.name}: {sensor.value}°C ≥ {self.temp_warn}°C (Warnung)",
                         snapshot,
                     )
-            if sensor.unit == "RPM" and sensor.value < FAN_MIN_RPM and sensor.value > 0:
+            if sensor.unit == "RPM" and 0 < sensor.value < FAN_MIN_RPM:
                 return self._result(
                     True, AnomalyType.FAN, Severity.HIGH, 1.0,
                     f"{sensor.name}: {sensor.value} RPM < {FAN_MIN_RPM} RPM",
@@ -130,10 +170,15 @@ class AnomalyDetector:
         )
 
     # ──────────────────────────────────────────
-    # 2. ML-basierte Prüfung (Isolation Forest)
+    # Stufe 2: ML-basierte Prüfung (Isolation Forest)
     # ──────────────────────────────────────────
 
     def _extract_features(self, snapshot: CollectorSnapshot) -> list[float] | None:
+        """Berechnet einen 6-dimensionalen Feature-Vektor aus einem Snapshot.
+
+        Features: [mean_temp, max_temp, mean_fan, min_fan, mean_power, critical_sel_count]
+        Gibt None zurück, wenn keine Temperaturdaten vorliegen (Modell kann nicht arbeiten).
+        """
         temps  = [s.value for s in snapshot.sensors if s.unit == "C"]
         fans   = [s.value for s in snapshot.sensors if s.unit == "RPM"]
         power  = [s.value for s in snapshot.sensors if s.unit == "W"]
@@ -151,7 +196,14 @@ class AnomalyDetector:
     def _ml_check(
         self, features: list[float], snapshot: CollectorSnapshot
     ) -> AnomalyResult:
-        # Warmup: Modell noch nicht trainiert
+        """Führt die Isolation-Forest-Inferenz für einen Feature-Vektor durch.
+
+        Während der Warmup-Phase (< WARMUP_SIZE Samples) werden Daten gesammelt
+        und das Modell trainiert. Danach wechselt der Detector in den Inferenz-Modus.
+
+        Der Isolation-Forest-Score ist negativ: je negativer, desto anomaler.
+        ``predict()`` gibt -1 (Anomalie) oder +1 (normal) zurück.
+        """
         if not self._trained:
             self._warmup_buffer.append(features)
             if len(self._warmup_buffer) >= WARMUP_SIZE:
@@ -163,8 +215,8 @@ class AnomalyDetector:
             )
 
         x     = np.array([features])
-        pred  = self._model.predict(x)[0]       # +1 normal, -1 Anomalie
-        score = self._model.score_samples(x)[0] # negativer = anomaler
+        pred  = self._model.predict(x)[0]
+        score = self._model.score_samples(x)[0]
 
         is_anomaly = pred == -1
         confidence = float(max(0.0, min(1.0, -score)))
@@ -179,6 +231,12 @@ class AnomalyDetector:
         )
 
     def _train(self, X: np.ndarray) -> None:
+        """Trainiert den Isolation Forest auf dem gesammelten Warmup-Datensatz.
+
+        Wird einmalig aufgerufen, sobald WARMUP_SIZE Samples vorliegen.
+        Das trainierte Modell wird anschließend auf model_path gespeichert,
+        damit ein Neustart die Warmup-Phase überspringt.
+        """
         logger.info("Trainiere Isolation Forest auf %d Samples ...", len(X))
         self._model = IsolationForest(
             n_estimators=100,
@@ -205,6 +263,7 @@ class AnomalyDetector:
         snapshot:     CollectorSnapshot,
         source:       str = "rule",
     ) -> AnomalyResult:
+        """Hilfsfunktion: erstellt ein AnomalyResult mit einheitlicher Signatur."""
         return AnomalyResult(
             is_anomaly=is_anomaly,
             anomaly_type=anomaly_type,
