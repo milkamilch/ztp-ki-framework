@@ -1,0 +1,5 @@
+scikit-learn>=1.4
+pandas>=2.2
+python-redfish>=2.5
+drain3>=0.9
+requests>=2.31
