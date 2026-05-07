@@ -58,6 +58,7 @@ class ZTPMonitor:
             username=bmc["username"],
             password=bmc["password"],
             timeout=bmc.get("timeout", 10),
+            scheme=bmc.get("scheme", "https"),
         )
         self.parser   = DrainLogParser()
         self.detector = AnomalyDetector(

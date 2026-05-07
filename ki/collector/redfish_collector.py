@@ -27,17 +27,19 @@ class RedfishCollector:
     BMC-TLS-Zertifikate werden bewusst nicht verifiziert (self-signed üblich).
     """
 
-    def __init__(self, username: str, password: str, timeout: int = 10):
+    def __init__(self, username: str, password: str, timeout: int = 10, scheme: str = "https"):
         """Initialisiert den Collector mit BMC-Zugangsdaten.
 
         Args:
             username: BMC-Benutzername (z. B. "admin").
             password: BMC-Passwort.
             timeout:  HTTP-Timeout in Sekunden pro Anfrage.
+            scheme:   "https" für echte BMCs (Standard), "http" für lokale Tests.
         """
         self.username = username
         self.password = password
         self.timeout  = timeout
+        self.scheme   = scheme
         self._sessions: dict[str, requests.Session] = {}
 
     # ──────────────────────────────────────────
@@ -210,7 +212,7 @@ class RedfishCollector:
             self._sessions[host] = s
         try:
             resp = self._sessions[host].get(
-                f"https://{host}{path}", timeout=self.timeout
+                f"{self.scheme}://{host}{path}", timeout=self.timeout
             )
             resp.raise_for_status()
             return resp.json()

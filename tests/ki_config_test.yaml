@@ -1,0 +1,19 @@
+# Test-Konfiguration für die Simulation gegen den Mock-BMC.
+# Zeigt auf localhost statt auf echte BMC-Hardware.
+
+targets:
+  - "127.0.0.1:8888"   # Mock-BMC-Server
+
+poll_interval_seconds: 5
+
+bmc:
+  username: admin
+  password: test
+  timeout:  5
+  scheme:   http    # HTTP für lokale Tests, echte BMCs nutzen https
+
+ansible:
+  inventory: ansible/inventory/hosts.ini
+
+model_path:    tests/model_test.joblib
+contamination: 0.05

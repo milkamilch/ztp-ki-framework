@@ -70,17 +70,18 @@ class DrainLogParser:
         """
         events = []
         for entry in entries:
-            result  = self._miner.add_log_message(entry.message)
-            cluster = result["cluster"]
+            # drain3 0.9.x gibt kein "cluster"-Objekt zurück, sondern ein
+            # flaches Dict mit cluster_id und template_mined als Strings.
+            result      = self._miner.add_log_message(entry.message)
+            template    = result["template_mined"]
+            cluster_id  = result["cluster_id"]
 
             severity = self._escalate_severity(entry.message, entry.severity)
-            params   = self._miner.get_parameter_list(
-                cluster.get_template(), entry.message
-            )
+            params   = self._miner.get_parameter_list(template, entry.message)
 
             events.append(ParsedLogEvent(
-                template_id=cluster.cluster_id,
-                template=cluster.get_template(),
+                template_id=cluster_id,
+                template=template,
                 params=[str(p) for p in (params or [])],
                 raw_message=entry.message,
                 severity=severity,
