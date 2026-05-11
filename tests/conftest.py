@@ -1,7 +1,5 @@
 from datetime import datetime, timezone
 
-import pytest
-
 from ki.models import (
     CollectorSnapshot, SelEntry, SensorReading,
 )
@@ -36,14 +34,15 @@ def make_fan_sensor(name: str, rpm: float, status: str = "OK") -> SensorReading:
     return SensorReading(name=name, value=rpm, unit="RPM", status=status, timestamp=_ts())
 
 
-def make_power_sensor(name: str, watts: float) -> SensorReading:
-    return SensorReading(name=name, value=watts, unit="W", status="OK", timestamp=_ts())
+def make_power_sensor(name: str, watts: float, status: str = "OK") -> SensorReading:
+    return SensorReading(name=name, value=watts, unit="W", status=status, timestamp=_ts())
 
 
-def make_sel_entry(message: str, severity: str = "OK") -> SelEntry:
+def make_sel_entry(message: str, severity: str = "OK", sensor_type: str = "") -> SelEntry:
     return SelEntry(
         entry_id="1",
         timestamp=_ts(),
         message=message,
         severity=severity,
+        sensor_type=sensor_type,
     )
