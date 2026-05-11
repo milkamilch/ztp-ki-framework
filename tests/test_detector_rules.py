@@ -74,3 +74,25 @@ def test_critical_rule_overrides_ml_warmup():
     assert result.is_anomaly is True
     assert result.severity == Severity.HIGH
     assert result.source == "rule"
+
+
+def test_ml_severity_overrides_rule_when_higher():
+    """Wenn ML-Severity > Regel-Severity, wird ML-Ergebnis zurückgegeben."""
+    from unittest.mock import MagicMock
+    import numpy as np
+
+    detector = AnomalyDetector()
+    # Inject a trained ML model that returns a strong anomaly (HIGH severity)
+    mock_model = MagicMock()
+    mock_model.predict.return_value = np.array([-1])
+    mock_model.score_samples.return_value = np.array([-0.4])  # → HIGH
+    detector._model = mock_model
+    detector._trained = True
+
+    # Rule check: normal temperature → OK
+    snapshot = make_snapshot(sensors=[make_temp_sensor("CPU 1", 45.0)])
+    result = detector.detect(snapshot, [])
+
+    assert result.is_anomaly is True
+    assert result.severity == Severity.HIGH
+    assert result.source == "ml"

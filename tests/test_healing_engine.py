@@ -75,3 +75,12 @@ def test_handle_records_to_history():
     assert engine.history[0] is record
     assert record.action == HealingAction.ALERT
     assert record.success is True
+
+
+def test_ml_outlier_low_defaults_to_alert():
+    """ML_OUTLIER + LOW is not in the decision matrix → defaults to ALERT."""
+    engine = _engine()
+    anomaly = _anomaly(AnomalyType.ML_OUTLIER, Severity.LOW)
+    with patch.object(engine, "_alert", return_value=(True, "ok")) as mock:
+        engine.handle(anomaly, "192.168.1.1")
+        mock.assert_called_once()
