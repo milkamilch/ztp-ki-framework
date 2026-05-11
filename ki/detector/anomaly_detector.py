@@ -218,13 +218,23 @@ class AnomalyDetector:
         pred  = self._model.predict(x)[0]
         score = self._model.score_samples(x)[0]
 
-        is_anomaly = pred == -1
+        is_anomaly = bool(pred == -1)
         confidence = float(max(0.0, min(1.0, -score)))
+
+        if is_anomaly:
+            if score < -0.3:
+                severity = Severity.HIGH
+            elif score < -0.1:
+                severity = Severity.MEDIUM
+            else:
+                severity = Severity.LOW
+        else:
+            severity = Severity.OK
 
         return self._result(
             is_anomaly,
             AnomalyType.ML_OUTLIER if is_anomaly else AnomalyType.NONE,
-            Severity.MEDIUM if is_anomaly else Severity.OK,
+            severity,
             confidence,
             f"Isolation Forest Score: {score:.4f}",
             snapshot, source="ml",
