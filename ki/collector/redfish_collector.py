@@ -150,7 +150,7 @@ class RedfishCollector:
     # ──────────────────────────────────────────
 
     def _collect_system_state(self, host: str) -> tuple[str, str | None]:
-        """Liest den aktuellen Power-State und Boot-Override-Status des Systems.
+        """Liest den aktuellen Power-State und POST-Code des Systems.
 
         Returns:
             Tuple (power_state, post_code), z. B. ("On", None).

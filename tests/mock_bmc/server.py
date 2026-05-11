@@ -102,7 +102,7 @@ def system():
     s = _current()
     return {
         "PowerState": s.power_state,
-        "Boot": {"BootSourceOverrideEnabled": "None"},
+        "Boot": {"BootSourceOverrideEnabled": "None", "PostCode": "0xA0"},
         "Status": {"Health": "OK", "State": "Enabled"},
     }
 
