@@ -33,6 +33,17 @@ FAN_MIN_RPM  = 500.0
 POWER_MAX_W  = 1200.0
 WARMUP_SIZE  = 50
 
+_SEVERITY_RANK: dict = {
+    Severity.OK:       0,
+    Severity.LOW:      1,
+    Severity.MEDIUM:   2,
+    Severity.HIGH:     3,
+    Severity.CRITICAL: 4,
+}
+
+_ML_SCORE_HIGH_THRESHOLD   = -0.3   # Isolation Forest scores below this → HIGH severity
+_ML_SCORE_MEDIUM_THRESHOLD = -0.1   # scores below this → MEDIUM; at or above → LOW
+
 
 class AnomalyDetector:
     """Erkennt Anomalien in Sensor-Daten und Log-Ereignissen.
@@ -105,7 +116,7 @@ class AnomalyDetector:
         features = self._extract_features(snapshot)
         if features:
             ml = self._ml_check(features, snapshot)
-            if ml.is_anomaly and ml.severity.value > rule.severity.value:
+            if ml.is_anomaly and _SEVERITY_RANK[ml.severity] > _SEVERITY_RANK[rule.severity]:
                 return ml
 
         return rule
@@ -222,9 +233,9 @@ class AnomalyDetector:
         confidence = float(max(0.0, min(1.0, -score)))
 
         if is_anomaly:
-            if score < -0.3:
+            if score < _ML_SCORE_HIGH_THRESHOLD:
                 severity = Severity.HIGH
-            elif score < -0.1:
+            elif score < _ML_SCORE_MEDIUM_THRESHOLD:
                 severity = Severity.MEDIUM
             else:
                 severity = Severity.LOW

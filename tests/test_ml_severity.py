@@ -69,3 +69,29 @@ def test_ml_ok_when_not_anomaly():
 
     assert result.is_anomaly is False
     assert result.severity == Severity.OK
+
+
+def test_ml_boundary_at_minus_0_1_is_low():
+    """score == -0.1 maps to LOW (exclusive boundary: < -0.1 is MEDIUM)."""
+    detector = _trained_detector()
+    detector._model.predict.return_value = np.array([-1])
+    detector._model.score_samples.return_value = np.array([-0.1])
+
+    snapshot = make_snapshot(sensors=[make_temp_sensor("CPU", 50.0)])
+    result = detector._ml_check([50.0, 50.0, 6000.0, 6000.0, 350.0, 0.0], snapshot)
+
+    assert result.is_anomaly is True
+    assert result.severity == Severity.LOW
+
+
+def test_ml_boundary_at_minus_0_3_is_medium():
+    """score == -0.3 maps to MEDIUM (exclusive boundary: < -0.3 is HIGH)."""
+    detector = _trained_detector()
+    detector._model.predict.return_value = np.array([-1])
+    detector._model.score_samples.return_value = np.array([-0.3])
+
+    snapshot = make_snapshot(sensors=[make_temp_sensor("CPU", 50.0)])
+    result = detector._ml_check([50.0, 50.0, 6000.0, 6000.0, 350.0, 0.0], snapshot)
+
+    assert result.is_anomaly is True
+    assert result.severity == Severity.MEDIUM
