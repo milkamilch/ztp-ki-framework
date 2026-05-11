@@ -157,7 +157,7 @@ class RedfishCollector:
         """
         data        = self._get(host, "/redfish/v1/Systems/1")
         power_state = data.get("PowerState", "Unknown")
-        post_code   = data.get("Boot", {}).get("BootSourceOverrideEnabled")
+        post_code   = data.get("Boot", {}).get("PostCode")
         return power_state, post_code
 
     # ──────────────────────────────────────────
