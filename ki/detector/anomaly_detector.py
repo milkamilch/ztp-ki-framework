@@ -162,13 +162,17 @@ class AnomalyDetector:
                     snapshot,
                 )
 
+        _BOOT_TIMEOUT_KEYWORDS = ("timeout", "watchdog", "boot failure")
+
         for event in events:
             if event.severity == "Critical":
-                anomaly_type = (
-                    AnomalyType.POST_ERROR
-                    if "post" in event.raw_message.lower()
-                    else AnomalyType.SEL_CRITICAL
-                )
+                msg_lower = event.raw_message.lower()
+                if any(kw in msg_lower for kw in _BOOT_TIMEOUT_KEYWORDS):
+                    anomaly_type = AnomalyType.BOOT_TIMEOUT
+                elif "post" in msg_lower:
+                    anomaly_type = AnomalyType.POST_ERROR
+                else:
+                    anomaly_type = AnomalyType.SEL_CRITICAL
                 return self._result(
                     True, anomaly_type, Severity.HIGH, 1.0,
                     f"Kritischer SEL-Eintrag: {event.raw_message}",
