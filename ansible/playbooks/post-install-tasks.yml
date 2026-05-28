@@ -1,0 +1,45 @@
+# ──────────────────────────────────────────────────────────────
+# Teilaufgaben der Post-Install-Konfiguration.
+# Wird von post-install.yml UND ztp-retry.yml eingebunden.
+# ──────────────────────────────────────────────────────────────
+
+- name: APT-Cache aktualisieren
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+
+- name: Node Exporter sicherstellen
+  ansible.builtin.systemd:
+    name: node_exporter
+    state: started
+    enabled: true
+  become: true
+  failed_when: false
+
+- name: Server-Status in Netbox auf 'active' setzen
+  ansible.builtin.uri:
+    url: "{{ netbox_url }}/api/dcim/devices/?name={{ inventory_hostname }}"
+    method: GET
+    headers:
+      Authorization: "Token {{ netbox_token }}"
+  register: nb_lookup
+  delegate_to: localhost
+  failed_when: false
+
+- name: Status auf 'active' patchen
+  ansible.builtin.uri:
+    url: "{{ netbox_url }}/api/dcim/devices/{{ nb_lookup.json.results[0].id }}/"
+    method: PATCH
+    headers:
+      Authorization: "Token {{ netbox_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      status: active
+    status_code: [200]
+  delegate_to: localhost
+  when:
+    - nb_lookup.status == 200
+    - nb_lookup.json.count > 0
+  failed_when: false

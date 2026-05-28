@@ -1,0 +1,10 @@
+# ──────────────────────────────────────────────────────────────
+# Gemeinsame Variablen für alle Ansible-Gruppen.
+# Secrets (netbox_token) werden per Env-Var oder ansible-vault gesetzt.
+# ──────────────────────────────────────────────────────────────
+
+node_exporter_version: "1.8.2"
+node_exporter_port: 9100
+
+netbox_url: "http://192.168.100.1:8080"
+netbox_token: "{{ lookup('env', 'NETBOX_TOKEN') | default('change-me-netbox-token') }}"
