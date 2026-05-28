@@ -22,3 +22,6 @@ ansible:
 # Isolation Forest
 model_path:    ki/model.joblib
 contamination: 0.05   # ~5% erwartete Ausreißerrate
+
+# Prometheus-Metriken (0 = deaktiviert)
+metrics_port: 8888

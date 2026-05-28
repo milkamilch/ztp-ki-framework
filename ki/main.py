@@ -51,6 +51,7 @@ class ZTPMonitor:
 
         self.targets       = cfg["targets"]
         self.poll_interval = cfg.get("poll_interval_seconds", 30)
+        self.metrics_port  = cfg.get("metrics_port", 0)
         self._running      = True
 
         bmc = cfg["bmc"]
@@ -77,6 +78,11 @@ class ZTPMonitor:
         Läuft bis ``stop()`` aufgerufen wird (SIGINT / SIGTERM).
         Schläft ``poll_interval`` Sekunden zwischen den Zyklen.
         """
+        if self.metrics_port:
+            from prometheus_client import start_http_server
+            start_http_server(self.metrics_port)
+            logger.info("Prometheus-Metriken auf :%d", self.metrics_port)
+
         logger.info(
             "ZTP-Monitor gestartet | %d Target(s) | Intervall: %ds",
             len(self.targets), self.poll_interval,
@@ -96,16 +102,21 @@ class ZTPMonitor:
         Args:
             target: BMC-IP-Adresse des Servers.
         """
+        from ki.metrics import poll_timer, record_anomaly, record_healing, record_poll_error
         try:
-            snapshot = self.collector.collect(target)
-            events   = self.parser.parse(snapshot.sel_entries)
-            anomaly  = self.detector.detect(snapshot, events)
+            with poll_timer(target):
+                snapshot = self.collector.collect(target)
+                events   = self.parser.parse(snapshot.sel_entries)
+                anomaly  = self.detector.detect(snapshot, events)
 
-            if anomaly.is_anomaly:
-                self.engine.handle(anomaly, target)
-            else:
-                logger.debug("[%s] OK — %s", target, anomaly.details)
+                if anomaly.is_anomaly:
+                    record_anomaly(target, anomaly.anomaly_type.value, anomaly.severity.value)
+                    record = self.engine.handle(anomaly, target)
+                    record_healing(target, record.action.value, record.success)
+                else:
+                    logger.debug("[%s] OK — %s", target, anomaly.details)
         except Exception:
+            record_poll_error(target)
             logger.exception("[%s] Unbehandelter Fehler", target)
 
     def stop(self) -> None:
