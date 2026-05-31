@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 
 from tests.mock_bmc.scenarios import SCENARIOS, Scenario
 
@@ -110,6 +110,15 @@ def system():
 # ──────────────────────────────────────────
 # Steuerungs-Endpoints (nur für Tests)
 # ──────────────────────────────────────────
+
+@app.post("/redfish/v1/Systems/1/Actions/ComputerSystem.Reset")
+async def reset_system(request: Request):
+    """Simuliert einen Redfish-Reset — Server bootet neu in den Normalzustand."""
+    body = await request.json()
+    reset_type = body.get("ResetType", "GracefulRestart")
+    _state["scenario"] = "normal"
+    return {"ResetType": reset_type, "ResetStatus": "OK", "Message": "Reset accepted — recovering to normal"}
+
 
 @app.get("/control/scenarios")
 def list_scenarios():

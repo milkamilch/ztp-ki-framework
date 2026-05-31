@@ -70,6 +70,8 @@ class ZTPMonitor:
             ansible_inventory=cfg["ansible"]["inventory"],
             redfish_user=bmc["username"],
             redfish_password=bmc["password"],
+            scheme=bmc.get("scheme", "https"),
+            demo_mode=cfg.get("demo_mode", False),
         )
 
     async def run(self) -> None:
@@ -109,12 +111,26 @@ class ZTPMonitor:
                 events   = self.parser.parse(snapshot.sel_entries)
                 anomaly  = self.detector.detect(snapshot, events)
 
+                temps = [s.value for s in snapshot.sensors if s.unit == "C"]
+                fans  = [s.value for s in snapshot.sensors if s.unit == "RPM"]
+                logger.info(
+                    "[%s] Sensoren: max_temp=%.1f°C  min_fan=%.0fRPM  SEL=%d  "
+                    "ML=%s  → %s/%s",
+                    target,
+                    max(temps, default=0.0),
+                    min(fans, default=0.0),
+                    len(snapshot.sel_entries),
+                    anomaly.source,
+                    anomaly.anomaly_type.value,
+                    anomaly.severity.value,
+                )
+
                 if anomaly.is_anomaly:
                     record_anomaly(target, anomaly.anomaly_type.value, anomaly.severity.value)
                     record = self.engine.handle(anomaly, target)
                     record_healing(target, record.action.value, record.success)
-                else:
-                    logger.debug("[%s] OK — %s", target, anomaly.details)
+                    status = "✓" if record.success else "✗"
+                    logger.info("[%s] %s Heilung: %s", target, status, record.message)
         except Exception:
             record_poll_error(target)
             logger.exception("[%s] Unbehandelter Fehler", target)

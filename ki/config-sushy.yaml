@@ -1,0 +1,21 @@
+# Realer VM-Test via sushy-emulator (Redfish-API für KVM-VMs)
+targets:
+  - localhost:8000   # sushy-emulator — steuert KVM-VM ztp-testserver
+
+poll_interval_seconds: 10
+
+bmc:
+  username: admin
+  password: admin
+  timeout:  5
+  scheme:   http
+
+ansible:
+  inventory: ansible/inventory/hosts.ini
+
+model_path:    ki/model.joblib
+contamination: 0.05
+
+metrics_port: 8889   # anderer Port als Demo (8888)
+
+demo_mode: true   # Ansible erst deaktiviert, bis PXE läuft

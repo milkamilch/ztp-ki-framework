@@ -40,7 +40,9 @@ class RedfishCollector:
         self.password = password
         self.timeout  = timeout
         self.scheme   = scheme
-        self._sessions: dict[str, requests.Session] = {}
+        self._sessions:    dict[str, requests.Session] = {}
+        self._system_ids:  dict[str, str] = {}
+        self._chassis_ids: dict[str, str] = {}
 
     # ──────────────────────────────────────────
     # Public API
@@ -81,8 +83,9 @@ class RedfishCollector:
         Gibt bei leerem Ergebnis an ipmitool weiter.
         """
         readings: list[SensorReading] = []
+        chassis_id = self._get_chassis_id(host)
 
-        thermal = self._get(host, "/redfish/v1/Chassis/1/Thermal")
+        thermal = self._get(host, f"/redfish/v1/Chassis/{chassis_id}/Thermal")
         for temp in thermal.get("Temperatures", []):
             val = temp.get("ReadingCelsius")
             if val is not None:
@@ -102,7 +105,7 @@ class RedfishCollector:
                     status=fan.get("Status", {}).get("Health", "Unknown"),
                 ))
 
-        power = self._get(host, "/redfish/v1/Chassis/1/Power")
+        power = self._get(host, f"/redfish/v1/Chassis/{chassis_id}/Power")
         for ctrl in power.get("PowerControl", []):
             val = ctrl.get("PowerConsumedWatts")
             if val is not None:
@@ -129,7 +132,8 @@ class RedfishCollector:
         Der SEL enthält Hardware-Ereignisse wie ECC-Fehler, Temperaturschwellen
         oder POST-Fehler und ist die wichtigste Quelle für den Log-Parser.
         """
-        data    = self._get(host, "/redfish/v1/Systems/1/LogServices/Sel/Entries")
+        system_id = self._get_system_id(host)
+        data    = self._get(host, f"/redfish/v1/Systems/{system_id}/LogServices/Sel/Entries")
         entries = []
         for m in data.get("Members", [])[:50]:
             try:
@@ -155,7 +159,8 @@ class RedfishCollector:
         Returns:
             Tuple (power_state, post_code), z. B. ("On", None).
         """
-        data        = self._get(host, "/redfish/v1/Systems/1")
+        system_id   = self._get_system_id(host)
+        data        = self._get(host, f"/redfish/v1/Systems/{system_id}")
         power_state = data.get("PowerState", "Unknown")
         post_code   = data.get("Boot", {}).get("PostCode")
         return power_state, post_code
@@ -196,6 +201,37 @@ class RedfishCollector:
     # ──────────────────────────────────────────
     # HTTP-Helper
     # ──────────────────────────────────────────
+
+    def _get_system_id(self, host: str) -> str:
+        """Ermittelt die System-ID aus der Redfish-Collection (cached).
+
+        Echte BMCs liefern meist "1", sushy-tools und andere Emulatoren
+        verwenden UUIDs. Diese Methode funktioniert mit beiden.
+        """
+        if host not in self._system_ids:
+            data = self._get(host, "/redfish/v1/Systems")
+            members = data.get("Members", [])
+            if members:
+                path = members[0].get("@odata.id", "/redfish/v1/Systems/1")
+                self._system_ids[host] = path.rstrip("/").split("/")[-1]
+            else:
+                self._system_ids[host] = "1"
+        return self._system_ids[host]
+
+    def _get_chassis_id(self, host: str) -> str:
+        """Ermittelt die Chassis-ID aus der Redfish-Collection (cached).
+
+        Analog zu _get_system_id — unterstützt sowohl "1" als auch UUID-Pfade.
+        """
+        if host not in self._chassis_ids:
+            data = self._get(host, "/redfish/v1/Chassis")
+            members = data.get("Members", [])
+            if members:
+                path = members[0].get("@odata.id", "/redfish/v1/Chassis/1")
+                self._chassis_ids[host] = path.rstrip("/").split("/")[-1]
+            else:
+                self._chassis_ids[host] = "1"
+        return self._chassis_ids[host]
 
     def _get(self, host: str, path: str) -> dict[str, Any]:
         """Führt einen authentifizierten GET-Request gegen die Redfish-API aus.

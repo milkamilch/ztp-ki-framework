@@ -1,0 +1,21 @@
+# Demo-Konfiguration — zeigt auf den Mock-BMC (kein echter Server nötig)
+targets:
+  - 127.0.0.1:18888   # Mock-BMC läuft lokal auf Port 18888
+
+poll_interval_seconds: 5   # kurzes Intervall für schnelle Demo
+
+bmc:
+  username: admin
+  password: test
+  timeout:  5
+  scheme:   http          # Mock-BMC spricht HTTP, kein TLS
+
+ansible:
+  inventory: ansible/inventory/hosts.ini
+
+model_path:    ki/model-demo.joblib
+contamination: 0.05
+
+metrics_port: 8888        # Prometheus scrapt diesen Port
+
+demo_mode: true           # Ansible-Playbooks simulieren statt ausführen

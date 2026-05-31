@@ -72,6 +72,8 @@ class HealingEngine:
         ansible_inventory: str,
         redfish_user:      str,
         redfish_password:  str,
+        scheme:            str = "https",
+        demo_mode:         bool = False,
     ):
         """Initialisiert die Engine mit Verbindungsparametern.
 
@@ -79,10 +81,14 @@ class HealingEngine:
             ansible_inventory: Pfad zur Ansible-Inventory-Datei.
             redfish_user:      BMC-Benutzername für Redfish-Reset-Aktionen.
             redfish_password:  BMC-Passwort.
+            scheme:            "http" oder "https" für Redfish-Aufrufe.
+            demo_mode:         Wenn True, wird ansible-playbook simuliert statt ausgeführt.
         """
         self.ansible_inventory = ansible_inventory
         self.redfish_user      = redfish_user
         self.redfish_password  = redfish_password
+        self.scheme            = scheme
+        self.demo_mode         = demo_mode
         self.history:           list[HealingRecord] = []
 
     def handle(self, anomaly: AnomalyResult, target: str) -> HealingRecord:
@@ -176,6 +182,28 @@ class HealingEngine:
         return self._run_playbook(ANSIBLE_PLAYBOOKS[HealingAction.ROLLBACK], target)
 
     # ──────────────────────────────────────────
+    # Redfish-Helpers
+    # ──────────────────────────────────────────
+
+    def _discover_system_id(self, target: str) -> str:
+        """Ermittelt die System-ID aus der Redfish-Collection.
+
+        Unterstützt sowohl echte BMCs ("1") als auch UUID-basierte Emulatoren.
+        """
+        try:
+            resp = requests.get(
+                f"{self.scheme}://{target}/redfish/v1/Systems",
+                auth=(self.redfish_user, self.redfish_password),
+                verify=False, timeout=10,
+            )
+            members = resp.json().get("Members", [])
+            if members:
+                return members[0]["@odata.id"].rstrip("/").split("/")[-1]
+        except Exception:
+            pass
+        return "1"
+
+    # ──────────────────────────────────────────
     # Redfish-Reset
     # ──────────────────────────────────────────
 
@@ -186,7 +214,8 @@ class HealingEngine:
             target:     BMC-IP-Adresse.
             reset_type: "GracefulRestart" oder "ForceRestart".
         """
-        url = f"https://{target}/redfish/v1/Systems/1/Actions/ComputerSystem.Reset"
+        system_id = self._discover_system_id(target)
+        url = f"{self.scheme}://{target}/redfish/v1/Systems/{system_id}/Actions/ComputerSystem.Reset"
         try:
             resp = requests.post(
                 url,
@@ -207,13 +236,17 @@ class HealingEngine:
     def _run_playbook(self, playbook: str, target: str) -> tuple[bool, str]:
         """Führt ein Ansible-Playbook mit ``--limit target`` aus.
 
-        Timeout ist auf 120 Sekunden gesetzt, da Playbooks auf dem
-        zu provisionierenden Server SSH-Tasks ausführen können.
+        Im demo_mode wird die Ausführung simuliert (kein echter ansible-playbook-Aufruf).
 
         Args:
             playbook: Relativer Pfad zur .yml-Datei (z. B. "ansible/playbooks/ztp-retry.yml").
             target:   Hostname oder IP, auf den ``--limit`` gesetzt wird.
         """
+        if self.demo_mode:
+            msg = f"[DEMO] Playbook '{playbook}' simuliert erfolgreich für {target}"
+            logger.info(msg)
+            return True, msg
+
         cmd = [
             "ansible-playbook",
             "-i", self.ansible_inventory,

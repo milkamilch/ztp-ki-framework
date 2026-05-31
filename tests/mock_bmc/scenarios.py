@@ -150,4 +150,27 @@ SCENARIOS: dict[str, Scenario] = {
         ],
         power_state="PoweringOn",
     ),
+
+    "boot_timeout": Scenario(
+        name="boot_timeout",
+        description="Boot-Watchdog abgelaufen — Server hat nicht innerhalb des Zeitfensters gebootet",
+        temps_c=[
+            ("CPU 1 Temp",  40.0, "OK"),
+            ("CPU 2 Temp",  39.0, "OK"),
+            ("Inlet Temp",  22.0, "OK"),
+            ("Exhaust Temp",30.0, "OK"),
+        ],
+        fans_rpm=[
+            ("Fan 1A", 2800.0, "OK"),
+            ("Fan 1B", 2750.0, "OK"),
+            ("Fan 2A", 2900.0, "OK"),
+            ("Fan 2B", 2780.0, "OK"),
+        ],
+        power_w=160.0,
+        sel_entries=[
+            ("Boot watchdog timeout — system did not boot within expected time", "Critical"),
+            ("OS watchdog timer expired during provisioning", "Critical"),
+        ],
+        power_state="PoweringOn",
+    ),
 }
