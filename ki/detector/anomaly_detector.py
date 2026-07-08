@@ -20,6 +20,8 @@ from pathlib import Path
 import joblib
 import numpy as np
 from sklearn.ensemble import IsolationForest
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 from ki.models import (
     AnomalyResult, AnomalyType, CollectorSnapshot, ParsedLogEvent, Severity,
@@ -163,6 +165,10 @@ class AnomalyDetector:
                 )
 
         _BOOT_TIMEOUT_KEYWORDS = ("timeout", "watchdog", "boot failure")
+        # Hardware-unrecoverable Ereignisse rechtfertigen eine vollständige
+        # Neu-Provisionierung (ROLLBACK) statt eines bloßen Reboots.
+        _FATAL_KEYWORDS = ("machine check", "fatal", "thermal trip",
+                           "thermal runaway", "unrecoverable")
 
         for event in events:
             if event.severity == "Critical":
@@ -173,9 +179,12 @@ class AnomalyDetector:
                     anomaly_type = AnomalyType.POST_ERROR
                 else:
                     anomaly_type = AnomalyType.SEL_CRITICAL
+                fatal = any(kw in msg_lower for kw in _FATAL_KEYWORDS)
+                severity = Severity.CRITICAL if fatal else Severity.HIGH
                 return self._result(
-                    True, anomaly_type, Severity.HIGH, 1.0,
-                    f"Kritischer SEL-Eintrag: {event.raw_message}",
+                    True, anomaly_type, severity, 1.0,
+                    f"{'Fataler' if fatal else 'Kritischer'} SEL-Eintrag: "
+                    f"{event.raw_message}",
                     snapshot,
                 )
 
@@ -263,10 +272,17 @@ class AnomalyDetector:
         damit ein Neustart die Warmup-Phase überspringt.
         """
         logger.info("Trainiere Isolation Forest auf %d Samples ...", len(X))
-        self._model = IsolationForest(
-            n_estimators=100,
-            contamination=self.contamination,
-            random_state=42,
+        # StandardScaler vor dem Isolation Forest: ohne Skalierung dominieren
+        # großskalige Features (Lüfter ~6000 RPM, Leistung ~350 W) die Distanz,
+        # während temperatur-/SEL-nahe Signale untergehen und faktisch nie als
+        # Ausreißer erkannt werden. Die Skalierung stellt alle Features gleich.
+        self._model = make_pipeline(
+            StandardScaler(),
+            IsolationForest(
+                n_estimators=100,
+                contamination=self.contamination,
+                random_state=42,
+            ),
         )
         self._model.fit(X)
         self._trained = True
