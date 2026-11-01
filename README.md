@@ -1,3 +1,17 @@
+## English summary
+
+Proof of concept for a bachelor's thesis in Business Informatics (2026): a modular, stack-independent zero-touch provisioning framework that commissions physical bare-metal servers without manual intervention and automatically detects and fixes faults during provisioning.
+
+**Pipeline:** PXE boot (dnsmasq + iPXE) → unattended Ubuntu install (Kickstart) → post-config with Ansible and registration in Netbox, monitored throughout by a Python self-healing layer: Redfish/IPMI → Drain3 log parsing → Isolation Forest + rules → retry / reboot / rollback.
+
+**Research question:** How can a zero-touch provisioning framework for physical server hardware be designed that enables fully automated commissioning through AI-based fault detection and self-healing mechanisms – and from what scale is such a framework economically beneficial for SME or enterprise data centres?
+
+**Run the demo:** `docker compose up -d && ./demo-start.sh` (mock BMC + AI layer; Grafana on :3000, Prometheus on :9090).
+
+Status: thesis completed (2026). The full documentation below is in German.
+
+---
+
 # ZTP-KI-Framework
 
 **Zero-Touch-Provisioning-Framework mit KI-gestützter Fehlererkennung und Self-Healing für physische Serverhardware**
@@ -141,4 +155,4 @@ Server einschalten
 
 ## Status
 
-> **Work in Progress** — Bachelorarbeit in Bearbeitung (2026)
+> **Abgeschlossen** — Bachelorarbeit 2026
